@@ -85,3 +85,4 @@ if __name__ == '__main__':
     # This allows you to run the app locally for testing
     # For deployment, a WSGI server like Gunicorn will be used (see Procfile)
     app.run(debug=True, port=5001)
+
