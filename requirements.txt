@@ -1,4 +1,6 @@
 Flask
-rembg
-Pillow
-gunicorn
+Flask-Cors
+pdf2docx
+pandas
+openpyxl
+werkzeug
