@@ -1,26 +1,20 @@
-import os
-from flask import Flask, request, render_template_string, send_file, jsonify
+import io
+from flask import Flask, render_template_string, request, send_file
 from rembg import remove
 from PIL import Image
-import io
 
-# Create a 'templates' directory if it doesn't exist
-if not os.path.exists('templates'):
-    os.makedirs('templates')
+# Initialize the Flask application
+app = Flask(__name__)
 
-# The HTML content will be written to this file
-# This is done to keep the Flask app structure standard
-html_file_path = os.path.join('templates', 'index.html')
-
-# Define the HTML template content
-# We will write this string to the templates/index.html file
-html_template = """
+# HTML template for the user interface, styled with Tailwind CSS
+# All logic is contained in this single file for simplicity.
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Background Remover</title>
+    <title>AI Background Remover</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
@@ -31,214 +25,214 @@ html_template = """
             width: 50px;
             height: 50px;
             border-radius: 50%;
-            border: 5px solid #f3f3f3;
-            border-top: 5px solid #3498db;
-            animation: spin 1s linear infinite;
+            border: 5px solid rgba(209, 213, 219, 0.3);
+            border-top-color: #3b82f6;
+            animation: spin 1s ease-in-out infinite;
         }
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800 flex items-center justify-center min-h-screen">
     <div class="container mx-auto p-4 md:p-8 max-w-2xl">
-        <div class="bg-white rounded-2xl shadow-xl p-6 md:p-10">
-            <div class="text-center mb-8">
-                <h1 class="text-3xl md:text-4xl font-bold text-gray-900">AI Background Remover</h1>
-                <p class="text-gray-500 mt-2">Upload your image and we'll remove the background for free!</p>
-            </div>
+        <div class="bg-white rounded-2xl shadow-lg p-8 md:p-12">
+            <header class="text-center mb-8">
+                <h1 class="text-4xl md:text-5xl font-bold text-gray-900">AI Background Remover</h1>
+                <p class="text-gray-600 mt-3 text-lg">Upload an image and let our AI remove the background for you.</p>
+            </header>
             
-            <!-- Upload Form -->
             <form id="upload-form" class="space-y-6">
-                <div>
-                    <label for="file-upload" class="cursor-pointer block w-full border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-500 hover:bg-gray-50 transition-colors">
-                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
-                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                        </svg>
-                        <span id="file-name" class="mt-2 block text-sm font-medium text-gray-600">Click to upload an image</span>
-                        <p class="text-xs text-gray-500">PNG, JPG, WEBP up to 10MB</p>
-                    </label>
-                    <input id="file-upload" name="file" type="file" class="sr-only" accept="image/png, image/jpeg, image/webp">
+                <div id="image-preview-container" class="w-full h-64 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50 hidden">
+                    <img id="image-preview" src="#" alt="Image Preview" class="max-h-full max-w-full rounded-md"/>
                 </div>
-                <button type="submit" id="submit-button" class="w-full bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                    Remove Background
+                
+                <div id="upload-box" class="w-full p-8 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center text-center cursor-pointer hover:bg-gray-50 transition-colors">
+                    <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <p class="mt-2 text-gray-500"><span class="font-semibold text-blue-600">Click to upload</span> or drag and drop</p>
+                    <p class="text-xs text-gray-500">PNG, JPG, or WEBP</p>
+                    <input id="file-input" type="file" name="file" class="hidden" accept="image/png, image/jpeg, image/webp">
+                </div>
+                
+                <button type="submit" id="submit-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-4 focus:ring-blue-300 transition-all disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center space-x-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L3 10.25l1.5-1.5L9.75 14l9.75-9.75L21 5.75z"></path></svg>
+                    <span>Remove Background</span>
                 </button>
             </form>
-
-            <!-- Loading Indicator -->
-            <div id="loading" class="text-center py-8" style="display: none;">
-                <div class="custom-loader mx-auto"></div>
-                <p class="mt-4 text-gray-600 font-medium">Processing your image...</p>
+            
+            <div id="result-section" class="mt-8 text-center hidden">
+                <h2 class="text-2xl font-semibold mb-4">Your Image is Ready!</h2>
+                <div class="flex justify-center p-4 bg-gray-100 rounded-lg">
+                    <img id="result-image" src="" alt="Result Image" class="max-w-full max-h-80 rounded-md shadow-md"/>
+                </div>
+                <a id="download-button" href="#" download="background-removed.png" class="mt-6 inline-block w-full md:w-auto bg-green-500 text-white font-bold py-3 px-6 rounded-lg hover:bg-green-600 focus:outline-none focus:ring-4 focus:ring-green-300 transition-all">
+                    Download Image
+                </a>
             </div>
 
+            <!-- Loading Spinner -->
+            <div id="loader" class="mt-8 hidden items-center justify-center flex-col">
+                <div class="custom-loader"></div>
+                <p class="text-gray-600 mt-4">Processing your image, please wait...</p>
+            </div>
+            
             <!-- Error Message -->
-            <div id="error-message" class="text-center p-4 my-4 bg-red-100 text-red-700 rounded-lg" style="display: none;">
-                <!-- Error content goes here -->
+            <div id="error-message" class="mt-6 hidden text-center bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
+                <strong class="font-bold">Oops!</strong>
+                <span class="block sm:inline" id="error-text">Something went wrong.</span>
             </div>
-
-            <!-- Result Display -->
-            <div id="result" class="mt-8" style="display: none;">
-                <h2 class="text-2xl font-bold text-center mb-6">Your Image is Ready!</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div class="text-center">
-                        <h3 class="font-semibold mb-2">Original</h3>
-                        <img id="original-image" class="rounded-lg shadow-md w-full h-auto object-contain max-h-80" alt="Original Image">
-                    </div>
-                    <div class="text-center">
-                        <h3 class="font-semibold mb-2">Background Removed</h3>
-                        <img id="processed-image" class="rounded-lg shadow-md w-full h-auto object-contain max-h-80" alt="Processed Image with background removed">
-                    </div>
-                </div>
-                <div class="mt-8 text-center">
-                    <a id="download-button" href="#" download="background-removed.png" class="inline-block bg-green-600 text-white font-semibold py-3 px-8 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all">
-                        Download Image
-                    </a>
-                </div>
-            </div>
-
         </div>
-        <footer class="text-center mt-6 text-sm text-gray-500">
-            <p>Powered by Python, Flask & Rembg. Deployed on Render.</p>
-        </footer>
     </div>
 
     <script>
         const form = document.getElementById('upload-form');
-        const fileInput = document.getElementById('file-upload');
+        const fileInput = document.getElementById('file-input');
+        const uploadBox = document.getElementById('upload-box');
         const submitButton = document.getElementById('submit-button');
-        const fileNameDisplay = document.getElementById('file-name');
-        const loading = document.getElementById('loading');
-        const resultDiv = document.getElementById('result');
-        const errorDiv = document.getElementById('error-message');
-        
-        const originalImage = document.getElementById('original-image');
-        const processedImage = document.getElementById('processed-image');
+        const loader = document.getElementById('loader');
+        const resultSection = document.getElementById('result-section');
+        const resultImage = document.getElementById('result-image');
         const downloadButton = document.getElementById('download-button');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        const imagePreviewContainer = document.getElementById('image-preview-container');
+        const imagePreview = document.getElementById('image-preview');
 
-        fileInput.addEventListener('change', () => {
-            if (fileInput.files.length > 0) {
-                const fileName = fileInput.files[0].name;
-                fileNameDisplay.textContent = fileName.length > 30 ? fileName.substring(0, 27) + '...' : fileName;
-            } else {
-                fileNameDisplay.textContent = 'Click to upload an image';
+        // Function to handle file selection
+        const handleFileSelect = () => {
+            const file = fileInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    imagePreview.src = e.target.result;
+                    imagePreviewContainer.classList.remove('hidden');
+                    uploadBox.classList.add('hidden');
+                }
+                reader.readAsDataURL(file);
+                submitButton.disabled = false;
             }
+        };
+
+        // Trigger file input click
+        uploadBox.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileSelect);
+        
+        // Handle drag and drop
+        uploadBox.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadBox.classList.add('border-blue-500', 'bg-blue-50');
+        });
+        uploadBox.addEventListener('dragleave', () => {
+            uploadBox.classList.remove('border-blue-500', 'bg-blue-50');
+        });
+        uploadBox.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadBox.classList.remove('border-blue-500', 'bg-blue-50');
+            fileInput.files = e.dataTransfer.files;
+            handleFileSelect();
         });
 
-        form.addEventListener('submit', async (event) => {
-            event.preventDefault();
+        // Initially disable the button
+        submitButton.disabled = true;
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
 
             if (!fileInput.files || fileInput.files.length === 0) {
-                showError('Please select a file to upload.');
+                showError("Please select a file first.");
                 return;
             }
 
-            const file = fileInput.files[0];
             const formData = new FormData();
-            formData.append('file', file);
+            formData.append('file', fileInput.files[0]);
 
-            // Hide previous results/errors and show loader
-            resultDiv.style.display = 'none';
-            errorDiv.style.display = 'none';
-            form.style.display = 'none';
-            loading.style.display = 'block';
+            // Reset UI
+            hideError();
+            resultSection.classList.add('hidden');
+            loader.classList.remove('hidden');
+            loader.classList.add('flex');
             submitButton.disabled = true;
 
             try {
-                const response = await fetch('/remove-bg', {
+                const response = await fetch('/remove_background', {
                     method: 'POST',
                     body: formData,
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    throw new Error(errorData.error || `Server responded with status: ${response.status}`);
+                    throw new Error(`Server error: ${response.statusText}`);
                 }
 
                 const blob = await response.blob();
-                const processedImageUrl = URL.createObjectURL(blob);
-                const originalImageUrl = URL.createObjectURL(file);
-                
-                originalImage.src = originalImageUrl;
-                processedImage.src = processedImageUrl;
-                downloadButton.href = processedImageUrl;
+                const url = URL.createObjectURL(blob);
 
-                resultDiv.style.display = 'block';
+                resultImage.src = url;
+                downloadButton.href = url;
+                resultSection.classList.remove('hidden');
+
             } catch (error) {
                 console.error('Error:', error);
-                showError(`An error occurred: ${error.message}`);
+                showError("Failed to process the image. Please try again.");
             } finally {
-                // Hide loader and show form again
-                loading.style.display = 'none';
-                form.style.display = 'block';
+                loader.classList.add('hidden');
+                loader.classList.remove('flex');
                 submitButton.disabled = false;
-                form.reset(); // Clear the file input
-                fileNameDisplay.textContent = 'Click to upload another image';
             }
         });
-
+        
         function showError(message) {
-            errorDiv.textContent = message;
-            errorDiv.style.display = 'block';
+            errorText.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorMessage.classList.add('hidden');
         }
     </script>
 </body>
 </html>
 """
 
-# Write the HTML content to the file
-with open(html_file_path, 'w') as f:
-    f.write(html_template)
-
-# --- Flask App ---
-app = Flask(__name__)
-
-# Set a higher body limit, e.g., 16 MB
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
-
+# Route for the main page
 @app.route('/')
 def index():
     """Renders the main upload page."""
-    return render_template_string(html_template)
+    return render_template_string(HTML_TEMPLATE)
 
-@app.route('/remove-bg', methods=['POST'])
+# Route to handle the background removal process
+@app.route('/remove_background', methods=['POST'])
 def remove_background():
-    """Handles the file upload and background removal process."""
+    """Handles file upload, removes background, and returns the processed image."""
     if 'file' not in request.files:
-        return jsonify({'error': 'No file part in the request'}), 400
-
+        return 'No file part', 400
+    
     file = request.files['file']
-
     if file.filename == '':
-        return jsonify({'error': 'No file selected for uploading'}), 400
+        return 'No selected file', 400
 
     if file:
         try:
-            input_bytes = file.read()
+            # Read the image file from the request
+            input_image_bytes = file.read()
             
-            # --- Image Processing with rembg ---
-            # Using Pillow to ensure the image is in a compatible format (RGBA)
-            # This improves reliability with different image types.
-            input_image = Image.open(io.BytesIO(input_bytes))
+            # Use rembg to remove the background
+            output_image_bytes = remove(input_image_bytes)
             
-            # rembg returns bytes of a PNG image
-            output_bytes = remove(input_image)
-            
-            # Send the result back as a file
+            # Return the processed image as a file attachment
             return send_file(
-                io.BytesIO(output_bytes),
+                io.BytesIO(output_image_bytes),
                 mimetype='image/png',
                 as_attachment=True,
                 download_name='background-removed.png'
             )
         except Exception as e:
-            # This will catch errors from rembg if the image format is unsupported
+            # Log the error for debugging
             print(f"Error processing image: {e}")
-            return jsonify({'error': 'Failed to process image. It might be corrupted or in an unsupported format.'}), 500
-    
-    return jsonify({'error': 'An unknown error occurred.'}), 500
+            return "Error processing image", 500
+            
+    return "Invalid file", 400
 
+# Main entry point for the application
 if __name__ == '__main__':
-    # This is for local development.
-    # Render will use a Gunicorn server instead.
-    app.run(debug=True)
+    # Using port 8080 as it's a common choice for web services
+    app.run(host='0.0.0.0', port=8080)
