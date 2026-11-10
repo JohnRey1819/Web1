@@ -1,6 +1,0 @@
-Flask
-Flask-Cors
-pdf2docx
-pandas
-openpyxl
-werkzeug
